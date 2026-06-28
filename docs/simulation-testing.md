@@ -84,12 +84,23 @@ for rf in rx.receive():
 
 ## 5. Containers (podman compose)
 
-Builds one image and runs `monitor` + `sensor` as two services talking over the
-compose network — no cable, no local Python env needed.
+Two self-contained test environments, each with its own compose file + run
+script, sharing one image. No cable, no local Python env needed. Logs land in
+each environment's `logs/`.
 
 ```bash
-podman compose -f compose.yaml up --build      # Ctrl-C to stop
-podman compose -f compose.yaml down
+# attitude streaming: sensor_sim -> monitor (runs until Ctrl-C)
+./environments/streaming/run.sh
+
+# register command & control: c2 drives device_sim through a demo sequence, exits
+./environments/c2/run.sh
+```
+
+Each `run.sh` is a thin wrapper; the equivalent raw commands are:
+```bash
+podman compose -f environments/streaming/compose.yaml up --build
+podman compose -f environments/c2/compose.yaml up --build \
+  --abort-on-container-exit --exit-code-from c2
 ```
 
 Note: the monitor's live line uses `\r` (no newline), so `podman compose logs` may

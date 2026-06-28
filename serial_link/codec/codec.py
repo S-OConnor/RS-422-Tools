@@ -1,14 +1,18 @@
 """L2 — struct-spec message codec.
 
 A message is declared as a list of :class:`Field` (name + `struct` format char)
-plus a 1-byte ``TYPE_ID``. The metaclass machinery (via ``__init_subclass__``)
-compiles a fixed :class:`struct.Struct` and registers the type id, so the wire
-layout is explicit and binary-exact — it maps 1:1 onto a C/C++ ``struct`` for the
-planned port.
+plus a 1-byte ``TYPE_ID``. ``__init_subclass__`` compiles a fixed
+:class:`struct.Struct` and registers the type id, so the wire layout is explicit
+and binary-exact — it maps 1:1 onto a C/C++ ``struct`` for the planned port.
 
 An INFO field is ``type_id(1B) | body``; :func:`decode` reads the id and
-dispatches to the right class. Fixed-size messages only for now; variable-length
-payloads (e.g. multi-register reads) are a Phase 2 extension.
+dispatches to the right class.
+
+**Fixed vs variable length.** Most messages are fixed-size (``FIELDS`` only). A
+message may also declare a single trailing ``ARRAY`` field — a repeated element
+packed after the fixed header. Its element count is implied by the frame length
+(the HDLC layer delimits the body exactly), so no length prefix is needed. This
+is what multi-register read responses use.
 """
 
 import struct
@@ -45,11 +49,14 @@ class Message:
     """Base class for struct-spec messages.
 
     Subclasses set ``TYPE_ID`` (int) and ``FIELDS`` (sequence of :class:`Field`).
-    ``ENDIAN`` defaults to big-endian / network order.
+    They may optionally set ``ARRAY`` to a single :class:`Field` describing a
+    trailing variable-length list of that element. ``ENDIAN`` defaults to
+    big-endian / network order.
     """
 
     TYPE_ID = None
     FIELDS = ()
+    ARRAY = None
     ENDIAN = ">"
 
     def __init_subclass__(cls, **kwargs):
@@ -58,6 +65,8 @@ class Message:
             return
         cls._struct = struct.Struct(cls.ENDIAN + "".join(f.fmt for f in cls.FIELDS))
         cls._names = tuple(f.name for f in cls.FIELDS)
+        cls._elem = struct.Struct(cls.ENDIAN + cls.ARRAY.fmt) if cls.ARRAY else None
+        cls._array_name = cls.ARRAY.name if cls.ARRAY else None
         if cls.TYPE_ID in registry:
             raise CodecError(
                 f"duplicate TYPE_ID 0x{cls.TYPE_ID:02X} "
@@ -68,32 +77,60 @@ class Message:
     def __init__(self, **values):
         for name in self._names:
             setattr(self, name, values.get(name, 0))
+        if self._array_name:
+            setattr(self, self._array_name, list(values.get(self._array_name) or []))
 
     def pack_body(self):
-        return self._struct.pack(*(getattr(self, n) for n in self._names))
+        head = self._struct.pack(*(getattr(self, n) for n in self._names))
+        if not self._elem:
+            return head
+        tail = b"".join(self._elem.pack(v) for v in getattr(self, self._array_name))
+        return head + tail
 
     @classmethod
     def unpack_body(cls, body):
-        if len(body) != cls._struct.size:
+        head_size = cls._struct.size
+        if not cls._elem:
+            if len(body) != head_size:
+                raise CodecError(
+                    f"{cls.__name__}: body is {len(body)} bytes, expected {head_size}"
+                )
+            return cls(**dict(zip(cls._names, cls._struct.unpack(body))))
+
+        if len(body) < head_size:
             raise CodecError(
                 f"{cls.__name__}: body is {len(body)} bytes, "
-                f"expected {cls._struct.size}"
+                f"expected at least {head_size}"
             )
-        values = cls._struct.unpack(body)
-        return cls(**dict(zip(cls._names, values)))
+        rest = body[head_size:]
+        esz = cls._elem.size
+        if len(rest) % esz:
+            raise CodecError(
+                f"{cls.__name__}: trailing {len(rest)} bytes not a multiple "
+                f"of element size {esz}"
+            )
+        values = dict(zip(cls._names, cls._struct.unpack(body[:head_size])))
+        values[cls._array_name] = [
+            cls._elem.unpack(rest[i:i + esz])[0] for i in range(0, len(rest), esz)
+        ]
+        return cls(**values)
 
     def encode(self):
         """Return the INFO field: ``type_id`` byte followed by the packed body."""
         return bytes((self.TYPE_ID,)) + self.pack_body()
 
+    @classmethod
+    def _all_names(cls):
+        return cls._names + ((cls._array_name,) if cls._array_name else ())
+
     def __eq__(self, other):
         return (
             type(self) is type(other)
-            and all(getattr(self, n) == getattr(other, n) for n in self._names)
+            and all(getattr(self, n) == getattr(other, n) for n in self._all_names())
         )
 
     def __repr__(self):
-        body = ", ".join(f"{n}={getattr(self, n)!r}" for n in self._names)
+        body = ", ".join(f"{n}={getattr(self, n)!r}" for n in self._all_names())
         return f"{type(self).__name__}({body})"
 
 

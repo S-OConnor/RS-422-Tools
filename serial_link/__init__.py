@@ -1,6 +1,7 @@
-"""serial_link — the RS-422/485 serial connection to the attitude sensor.
+"""serial_link — the RS-422/485 serial connection and on-wire protocol.
 
-This package owns the cable and the on-wire protocol.
+The core for both application domains in this repo: attitude streaming and
+register command/control. Owns the cable, framing, codec, and link.
 
 Layers:
   L0 transport  — the cable (Serial) + hardware-free stand-ins (Pty / Loopback)
@@ -26,6 +27,16 @@ from .codec import (
     CodecError,
     UnknownMessage,
     AttitudeSample,
+    ReadRegister,
+    WriteRegister,
+    ReadResponse,
+    WriteAck,
+    Nak,
+    NAK_UNKNOWN_CMD,
+    NAK_BAD_ADDR,
+    NAK_BAD_LENGTH,
+    NAK_READ_ONLY,
+    NAK_REASONS,
 )
 from .link import FramedLink, ReceivedFrame
 
@@ -37,6 +48,9 @@ __all__ = [
     # L2 codec
     "Field", "Message", "decode", "registry", "CodecError", "UnknownMessage",
     "AttitudeSample",
+    "ReadRegister", "WriteRegister", "ReadResponse", "WriteAck", "Nak",
+    "NAK_UNKNOWN_CMD", "NAK_BAD_ADDR", "NAK_BAD_LENGTH", "NAK_READ_ONLY",
+    "NAK_REASONS",
     # L3 link
     "FramedLink", "ReceivedFrame",
 ]

@@ -1,14 +1,9 @@
-"""L2 — concrete message catalog.
+"""Attitude telemetry (one message per file).
 
-Importing this module registers every message type with :mod:`serial_link.codec`.
-For the attitude-sensor link there is exactly one message: a periodic Euler
-attitude sample streamed at 10 Hz.
-
-Type-id ranges (convention):
-  0x20-0x2F  attitude / motion telemetry
+Type-id range 0x20-0x2F: attitude / motion telemetry.
 """
 
-from .codec import Field, Message
+from ..codec import Field, Message
 
 
 class AttitudeSample(Message):

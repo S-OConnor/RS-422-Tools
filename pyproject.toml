@@ -16,6 +16,8 @@ dev = ["pytest>=7"]
 sensor-sim = "apps.sensor_sim:main"
 monitor = "apps.monitor:main"
 attitude-publisher = "apps.attitude_publisher:main"
+c2 = "apps.c2:main"
+device-sim = "apps.device_sim:main"
 
 [tool.setuptools]
 packages = [
@@ -23,11 +25,14 @@ packages = [
     "serial_link.transport",   # L0
     "serial_link.framing",     # L1
     "serial_link.codec",       # L2
+    "serial_link.codec.messages",  # L2 message catalog (one module per message)
     "serial_link.link",        # L3
     "apps",
     "apps.sensor_sim",         # TX: synthetic attitude stream (test stand-in)
     "apps.monitor",            # RX: read attitude from the link
     "apps.attitude_publisher", # TX: replay attitude out over the link
+    "apps.c2",                 # C2: register read/write host (master)
+    "apps.device_sim",         # C2: register device stand-in (slave)
 ]
 
 [tool.pytest.ini_options]

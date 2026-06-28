@@ -1,0 +1,47 @@
+# Command & control test environment (register read/write).
+#
+#   ./run.sh           (or: podman compose -f compose.yaml up --build \
+#                              --abort-on-container-exit --exit-code-from c2)
+#
+# `device` is an always-on register device (re-accepts clients, keeps state) seeded
+# with a couple of registers. `c2` runs a demo sequence of read/write commands then
+# exits. Both append a CSV audit log under ./logs/.
+name: rs422-c2
+
+services:
+  device:
+    build:
+      context: ../..
+      dockerfile: Containerfile
+    image: rs422-attitude
+    command: ["python", "-m", "apps.device_sim",
+              "--tcp", "0.0.0.0:5555", "--listen",
+              "--size", "256", "--seed", "0x10=0x1234", "--seed", "0x11=0x00AA",
+              "--log", "/logs/device.csv"]
+    volumes:
+      - ./logs:/logs:z             # :z = shared SELinux relabel (Fedora/RHEL; shared by both services)
+    tty: true
+
+  c2:
+    image: rs422-attitude          # reuse the image device builds (run with --build)
+    depends_on:
+      - device
+    volumes:
+      - ./logs:/logs:Z
+    # One-shot demo: a sequence of c2 commands against the device, then exit.
+    # Small sleeps let the device re-accept between one-shot connections.
+    command:
+      - sh
+      - -c
+      - |
+        sleep 2
+        echo '--- read seeded 0x10 ---';        python -m apps.c2 --tcp device:5555 --log /logs/c2.csv read 0x10
+        sleep 0.3
+        echo '--- multi-read 0x10..0x11 ---';    python -m apps.c2 --tcp device:5555 --log /logs/c2.csv read 0x10 2
+        sleep 0.3
+        echo '--- write 0x20=0xBEEF ---';        python -m apps.c2 --tcp device:5555 --log /logs/c2.csv write 0x20 0xBEEF
+        sleep 0.3
+        echo '--- read back 0x20 ---';           python -m apps.c2 --tcp device:5555 --log /logs/c2.csv read 0x20
+        sleep 0.3
+        echo '--- bad address (expect NAK) ---'; python -m apps.c2 --tcp device:5555 --log /logs/c2.csv read 0x200
+        echo '--- done ---'

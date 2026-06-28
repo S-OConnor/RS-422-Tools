@@ -1,0 +1,26 @@
+# Streaming test environment (attitude telemetry).
+#
+#   ./run.sh           (or: podman compose -f compose.yaml up --build)
+#
+# sensor_sim streams AttitudeSample @ 10 Hz; monitor receives, displays, and logs
+# to ./logs/attitude.csv. No hardware needed — they talk over the compose network.
+name: rs422-streaming
+
+services:
+  monitor:
+    build:
+      context: ../..
+      dockerfile: Containerfile
+    image: rs422-attitude
+    command: ["python", "-m", "apps.monitor",
+              "--tcp", "0.0.0.0:5555", "--listen", "--log", "/logs/attitude.csv"]
+    volumes:
+      - ./logs:/logs:z             # :z = shared SELinux relabel (needed on Fedora/RHEL)
+    tty: true
+
+  sensor:
+    image: rs422-attitude          # reuse the image monitor builds (run with --build)
+    command: ["python", "-m", "apps.sensor_sim", "--tcp", "monitor:5555", "--rate", "10"]
+    depends_on:
+      - monitor
+    restart: on-failure            # retry until the monitor is listening
