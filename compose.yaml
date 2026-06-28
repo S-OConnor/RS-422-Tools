@@ -1,0 +1,45 @@
+# podman compose -f compose.yaml up --build
+#
+# Hardware-free demo: NO cable needed. The monitor listens on a TCP port and the
+# sensor connects to it over the compose network — the same framing/codec runs
+# byte-for-byte as it would over the real RS-422 cord.
+#
+# To use the REAL cable instead, see the commented `devices:` blocks below.
+
+services:
+  monitor:
+    build:
+      context: .
+      dockerfile: Containerfile
+    image: rs422-attitude
+    # Listen on all interfaces so the sensor container can reach it.
+    command: ["python", "-m", "apps.monitor", "--tcp", "0.0.0.0:5555", "--listen"]
+    tty: true                 # render the refreshing live line nicely in logs
+    # ports:
+    #   - "5555:5555"         # uncomment to reach the link from the host too
+
+    # --- REAL CABLE variant: comment out the --tcp command above and use ---
+    # command: ["python", "-m", "apps.monitor", "--port", "/dev/ttyUSB0", "--baud", "115200"]
+    # devices:
+    #   - "/dev/ttyUSB0:/dev/ttyUSB0"     # the PC-side FTDI cable (find via /dev/serial/by-id)
+
+  sensor:
+    image: rs422-attitude     # reuse the image built by `monitor` (run with --build once)
+    command: ["python", "-m", "apps.sensor_sim", "--tcp", "monitor:5555", "--rate", "10"]
+    depends_on:
+      - monitor
+    restart: on-failure       # retry until the monitor is listening, then stream
+
+    # --- REAL CABLE variant: a second FTDI cable wired A-A/B-B/GND to the first ---
+    # command: ["python", "-m", "apps.sensor_sim", "--port", "/dev/ttyUSB1", "--baud", "115200"]
+    # devices:
+    #   - "/dev/ttyUSB1:/dev/ttyUSB1"
+
+# Notes for the real-cable variant:
+#  * Find the stable device path with `ls -l /dev/serial/by-id/` (the FT231X
+#    serial number is in the name) and map THAT node, e.g.
+#      devices: - "/dev/serial/by-id/usb-FTDI_FT231X_...-if00-port0:/dev/ttyUSB0"
+#  * Rootless podman may need device access: add `--group-add keep-groups` (or run
+#    the container as a user in the host `dialout` group), or use `:rwm` perms.
+#  * A real sensor needs only ONE cable (sensor -> PC). Two cables is only for
+#    simulating both ends on one machine.

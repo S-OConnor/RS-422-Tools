@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rs422-attitude"
+version = "0.1.0"
+description = "Attitude-sensor link over RS-422: serial_link core (RFC 1662 HDLC + struct codec) plus a 10 Hz sensor simulator and a live monitor"
+requires-python = ">=3.9"
+dependencies = ["pyserial>=3.5"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+sensor-sim = "apps.sensor_sim:main"
+monitor = "apps.monitor:main"
+attitude-publisher = "apps.attitude_publisher:main"
+
+[tool.setuptools]
+packages = [
+    "serial_link",
+    "serial_link.transport",   # L0
+    "serial_link.framing",     # L1
+    "serial_link.codec",       # L2
+    "serial_link.link",        # L3
+    "apps",
+    "apps.sensor_sim",         # TX: synthetic attitude stream (test stand-in)
+    "apps.monitor",            # RX: read attitude from the link
+    "apps.attitude_publisher", # TX: replay attitude out over the link
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
