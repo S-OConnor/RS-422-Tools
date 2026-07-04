@@ -1,11 +1,14 @@
-archive/
-tests/
+# Build context for the C++ images (Containerfile.build / Containerfile.runtime),
+# whose context is the repo root. Keep it to the C++ project only — everything
+# else is either unrelated or rebuilt inside the image.
+tools/
+environments/
 docs/
 scripts/
-environments/
-**/logs/
 .git/
-.pytest_cache/
-**/__pycache__/
-*.pyc
-*.egg-info/
+.claude/
+build/
+**/build/
+*.o
+*.a
+.cache/

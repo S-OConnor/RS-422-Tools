@@ -4,7 +4,7 @@
 # the monitor at one and the sensor at the other (each via --port).
 #
 #   ./scripts/make_vport.sh
-#   # note the two PTY paths it prints, then in two terminals (from repo root):
+#   # note the two PTY paths it prints, then in two terminals (from tools/):
 #   python -m apps.monitor    --port /dev/pts/<A>
 #   python -m apps.sensor_sim --port /dev/pts/<B>
 #

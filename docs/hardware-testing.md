@@ -9,6 +9,9 @@ cable and sensor.
 > `serial_link`. So a pair of TTL adapters faithfully tests everything *except* the
 > RS-422 electrical/half-duplex layer (which our software never touches).
 
+> **Run the `python -m …` commands from the `tools/` directory** (where the Python
+> lives), or use the console scripts after `cd tools && pip install -e .`.
+
 ## Option A — two USB-to-TTL adapters (cheap stand-in)
 
 ### Parts

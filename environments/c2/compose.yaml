@@ -11,7 +11,7 @@ name: rs422-c2
 services:
   device:
     build:
-      context: ../..
+      context: ../../tools       # the Python lives under tools/
       dockerfile: Containerfile
     image: rs422-attitude
     command: ["python", "-m", "apps.device_sim",

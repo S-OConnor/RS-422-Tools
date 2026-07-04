@@ -113,5 +113,5 @@ audit log (`ts_unix, role, op, addr, arg, result, detail`).
 ---
 
 For the full set of ways to run these (loopback, pty, containers, real cable),
-see [../docs/simulation-testing.md](../docs/simulation-testing.md) and
-[../docs/hardware-testing.md](../docs/hardware-testing.md).
+see [../../docs/simulation-testing.md](../../docs/simulation-testing.md) and
+[../../docs/hardware-testing.md](../../docs/hardware-testing.md).

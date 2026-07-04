@@ -6,9 +6,13 @@ entire software stack — transport interface, RFC 1662 framing, FCS-16, the
 
 > See [hardware-testing.md](hardware-testing.md) for the real-serial paths.
 
+> **Run the `python -m …` / `pytest` commands from the `tools/` directory** (where the
+> Python lives), or use the console scripts after installing.
+
 ## Setup
 
 ```bash
+cd tools
 python -m pip install -e ".[dev]"   # installs serial_link + apps + pyserial + pytest
 ```
 

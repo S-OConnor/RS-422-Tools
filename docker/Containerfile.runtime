@@ -1,0 +1,45 @@
+# Runtime container for the serial_link C++ apps.
+#
+# Multi-stage: a throwaway builder compiles the three apps (libstdc++/libgcc
+# linked statically so the final image needs only libc), then a slim Debian
+# stage carries just the binaries. No compiler, no source, no test deps.
+#
+#   podman build -f Containerfile.runtime -t rs422-cpp .
+#   # attitude RX over TCP (listener):
+#   podman run --rm -it -p 5555:5555 rs422-cpp rs422-monitor --tcp 0.0.0.0:5555 --listen
+#   # register C2 host:
+#   podman run --rm rs422-cpp rs422-c2 --tcp host.containers.internal:5555 read 0x10 4
+#   # real cable — pass the device through:
+#   podman run --rm -it --device /dev/ttyUSB0 rs422-cpp rs422-monitor --port /dev/ttyUSB0
+#
+# ---- stage 1: build --------------------------------------------------------
+FROM docker.io/library/debian:bookworm-slim AS build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential cmake git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY . /src
+
+# Apps only (no tests -> no network needed for GoogleTest). Static C++ runtime
+# so the final image is independent of the host libstdc++ version.
+RUN cmake -S /src -B /build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DSERIAL_LINK_BUILD_TESTS=OFF \
+        -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++" \
+    && cmake --build /build -j "$(nproc)" \
+    && cmake --install /build --prefix /opt/serial_link
+
+# ---- stage 2: runtime ------------------------------------------------------
+FROM docker.io/library/debian:bookworm-slim
+
+# Copy just the app binaries (the static lib + headers stay in the build stage).
+COPY --from=build /opt/serial_link/bin/ /usr/local/bin/
+
+# Non-root by default; add to the dialout group so a passed-through serial
+# device (/dev/ttyUSB*) is accessible.
+RUN groupadd -r rs422 && useradd -r -g rs422 -G dialout rs422
+USER rs422
+
+CMD ["bash", "-lc", "echo 'serial_link apps: rs422-monitor  rs422-c2  rs422-attitude-publisher'"]

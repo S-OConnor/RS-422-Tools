@@ -1,0 +1,37 @@
+# Build container for the serial_link C++ port.
+#
+# A self-contained toolchain image (GCC + CMake + git) that compiles the library
+# and the three apps and installs them under /opt/serial_link. It doubles as a
+# reproducible dev / CI environment — run it interactively to rebuild, run
+# ctest, or cross-check against the Python side.
+#
+#   podman build -f Containerfile.build -t rs422-cpp-build .
+#   podman run --rm -it rs422-cpp-build            # shell with toolchain + source
+#   podman run --rm rs422-cpp-build ctest --test-dir /build --output-on-failure
+#
+# Tests default ON here (this is the CI image and has network for FetchContent).
+# Pass --build-arg BUILD_TESTS=OFF for a network-free, apps-only build.
+FROM docker.io/library/debian:bookworm-slim
+
+ARG BUILD_TESTS=ON
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        cmake \
+        git \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY . /src
+
+# Configure + build + install. C++20, Release. GoogleTest is fetched only when
+# BUILD_TESTS=ON (find_package first, then FetchContent as a fallback).
+RUN cmake -S /src -B /build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DSERIAL_LINK_BUILD_TESTS=${BUILD_TESTS} \
+    && cmake --build /build -j "$(nproc)" \
+    && cmake --install /build --prefix /opt/serial_link
+
+ENV PATH="/opt/serial_link/bin:${PATH}"
+CMD ["bash"]
