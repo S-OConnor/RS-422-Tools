@@ -10,6 +10,10 @@ Software for talking to a board over RS-422/485 with an
 Both use **RFC 1662 HDLC-like framing** (flag-delimited, byte-stuffed, FCS-16) with a
 struct-spec codec whose message bodies map 1:1 onto the big-endian wire format.
 
+The wire interfaces are specified byte-for-byte in two Interface Design Documents:
+- [IDD-ATT-001 — Attitude Data](docs/idd-attitude.md) — the `AttitudeSample` stream.
+- [IDD-REG-001 — Register Command & Control](docs/idd-registers.md) — read/write registers and replies.
+
 ## Repository layout
 
 ```
@@ -161,4 +165,6 @@ Containerised integration environments (no hardware) live in
 ```
 
 For the full menu of test paths, see [docs/simulation-testing.md](docs/simulation-testing.md)
-and [docs/hardware-testing.md](docs/hardware-testing.md).
+and [docs/hardware-testing.md](docs/hardware-testing.md). To add new fields or message types to
+the attitude stream (C++ and Python together), see
+[docs/extending-attitude-telemetry.md](docs/extending-attitude-telemetry.md).
