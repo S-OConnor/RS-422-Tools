@@ -1,0 +1,44 @@
+# CI toolchain image for the serial_link multi-arch pipeline.
+#
+# Bundles everything .gitlab-ci.yml needs — host + aarch64 + riscv64 cross
+# compilers, qemu-user, the lint/static-analysis tools, python + pyserial for the
+# integration sims, and syft/grype for SBOMs — so pipeline jobs start instantly
+# instead of apt-installing per job.
+#
+# Build + push (done by the `ci-image` pipeline job, or by hand):
+#   podman build -f docker/Containerfile.ci -t <registry>/serial-link/toolchain:latest .
+# Then point the pipeline at it by setting the CI/CD variable:
+#   CI_IMAGE = <registry>/serial-link/toolchain:latest
+#
+# ci/setup.sh is still safe to run inside this image — it detects the tools are
+# already present and no-ops.
+FROM docker.io/library/debian:trixie-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Keep this list in sync with the profiles in ci/setup.sh.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        # base
+        build-essential cmake ninja-build ccache git ca-certificates \
+        pkg-config file dpkg-dev fakeroot iproute2 curl xz-utils \
+        # lint / static analysis
+        clang-tidy clang-format cppcheck shellcheck \
+        # host GoogleTest (skips FetchContent on native builds)
+        libgtest-dev libgmock-dev \
+        # cross toolchains (aarch64 + riscv64) and foreign-arch emulation
+        crossbuild-essential-arm64 crossbuild-essential-riscv64 qemu-user-static \
+        # integration simulators
+        python3 python3-serial \
+    && rm -rf /var/lib/apt/lists/*
+
+# SBOM + vulnerability tooling (not packaged by Debian). Pin with build args for
+# reproducibility.
+ARG SYFT_VERSION=""
+ARG GRYPE_VERSION=""
+RUN curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+        | sh -s -- -b /usr/local/bin ${SYFT_VERSION:+"v${SYFT_VERSION}"} \
+ && curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
+        | sh -s -- -b /usr/local/bin ${GRYPE_VERSION:+"v${GRYPE_VERSION}"} \
+ && syft version && grype version
+
+CMD ["bash"]

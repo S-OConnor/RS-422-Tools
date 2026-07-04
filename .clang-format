@@ -1,0 +1,17 @@
+# Format for the C++ port. Matches the house style already in src/ include/ apps/:
+# 4-space indent, 100-column lines, attached braces, left-aligned pointers,
+# un-indented namespace bodies.
+---
+Language: Cpp
+BasedOnStyle: Google
+ColumnLimit: 100
+IndentWidth: 4
+AccessModifierOffset: -4
+ContinuationIndentWidth: 4
+DerivePointerAlignment: false
+PointerAlignment: Left
+NamespaceIndentation: None
+IncludeBlocks: Preserve
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: WithoutElse
+SortIncludes: CaseSensitive

@@ -1,0 +1,311 @@
+# ============================================================================
+#  serial_link — RS-422 C++ apps — multi-arch CI/CD
+# ============================================================================
+# Stages:  lint → build → test → integration → package → sbom
+#
+# build → package fan out across five microarchitecture VARIANTS (test,
+# integration and sbom cover all five too):
+#
+#   VARIANT                arch      target
+#   ---------------------  --------  --------------------------------------------
+#   x86_64-broadwell       x86-64    Intel Broadwell (generic Xeon/Core)
+#   x86_64-znver2          x86-64    AMD Ryzen (Zen 2)
+#   aarch64-cortex-a72     arm64     ARM Cortex-A72 (RPi 4 & many SBCs)
+#   riscv64-sifive-x280    riscv64   SiFive Intelligence X280 (RVV, VLEN=512)
+#   riscv64-spacemit-k1    riscv64   SpacemiT K1 — Orange Pi RV2 (RVV, VLEN=256)
+#
+# Each VARIANT maps 1:1 to cmake/toolchains/<VARIANT>.cmake — that file owns the
+# -march/-mtune, the cross compiler, the qemu-user emulator (used to run tests +
+# integration for foreign arches on an x86 runner), and the package tag/arch.
+#
+# Runs on gitlab.com shared runners AND locally with gitlab-ci-local — see
+# docs/ci-cd.md. Jobs install their deps via ci/setup.sh on the default
+# debian:trixie-slim image; set CI_IMAGE to the prebuilt toolchain image
+# (docker/Containerfile.ci) for ~10x faster pipelines. Registry pushes are gated
+# on REGISTRY_ENABLED so they no-op under gitlab-ci-local.
+# ============================================================================
+
+stages: [lint, build, test, integration, package, sbom]
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS'
+      when: never
+    - if: '$CI_COMMIT_BRANCH'
+    - if: '$CI_COMMIT_TAG'
+
+variables:
+  CI_IMAGE: "debian:trixie-slim"        # override -> prebuilt toolchain image for speed
+  CCACHE_DIR: "$CI_PROJECT_DIR/.ccache"
+  CCACHE_MAXSIZE: "500M"
+  GIT_DEPTH: "20"
+  REGISTRY_ENABLED: "true"              # "false" locally to skip image push (see .gitlab-ci-local-variables.yml)
+
+default:
+  image: "$CI_IMAGE"
+  interruptible: true
+  retry:
+    max: 2
+    when: [runner_system_failure, stuck_or_timeout_failure, api_failure]
+
+# ============================================================================
+#  variant templates — carry VARIANT/ARCH/EMU + a per-variant ccache
+# ============================================================================
+# EMU is the qemu-user prefix used to run foreign-arch app binaries during the
+# integration stage (empty for native x86). Its -cpu mirrors the emulator baked
+# into the matching toolchain file (which ctest uses for the test stage).
+
+.v-x86_64-broadwell:
+  variables: {VARIANT: "x86_64-broadwell", ARCH: "x86_64", EMU: ""}
+  cache: {key: "ccache-x86_64-broadwell", paths: [".ccache"]}
+
+.v-x86_64-znver2:
+  variables: {VARIANT: "x86_64-znver2", ARCH: "x86_64", EMU: ""}
+  cache: {key: "ccache-x86_64-znver2", paths: [".ccache"]}
+
+.v-aarch64-cortex-a72:
+  variables:
+    VARIANT: "aarch64-cortex-a72"
+    ARCH: "aarch64"
+    EMU: "qemu-aarch64-static -L /usr/aarch64-linux-gnu -cpu cortex-a72"
+  cache: {key: "ccache-aarch64-cortex-a72", paths: [".ccache"]}
+
+.v-riscv64-sifive-x280:
+  variables:
+    VARIANT: "riscv64-sifive-x280"
+    ARCH: "riscv64"
+    EMU: "qemu-riscv64-static -L /usr/riscv64-linux-gnu -cpu rv64,v=true,vlen=512,vext_spec=v1.0,zba=true,zbb=true"
+  cache: {key: "ccache-riscv64-sifive-x280", paths: [".ccache"]}
+
+.v-riscv64-spacemit-k1:
+  variables:
+    VARIANT: "riscv64-spacemit-k1"
+    ARCH: "riscv64"
+    EMU: "qemu-riscv64-static -L /usr/riscv64-linux-gnu -cpu rv64,v=true,vlen=256,vext_spec=v1.0,zba=true,zbb=true,zbs=true"
+  cache: {key: "ccache-riscv64-spacemit-k1", paths: [".ccache"]}
+
+# ============================================================================
+#  stage templates — the actual logic, parameterised by the variant vars
+# ============================================================================
+
+.build:
+  stage: build
+  needs: []
+  before_script:
+    - |
+      case "$ARCH" in
+        aarch64) DEPS="cross-arm64" ;;
+        riscv64) DEPS="cross-riscv64" ;;
+        *)       DEPS="host-gtest" ;;
+      esac
+    - bash ci/setup.sh base $DEPS
+  script:
+    - |
+      cmake -S . -B "build/$VARIANT" -G Ninja \
+        -DCMAKE_TOOLCHAIN_FILE="cmake/toolchains/$VARIANT.cmake" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+        -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+        -DSERIAL_LINK_BUILD_TESTS=ON
+    - cmake --build "build/$VARIANT" -j "$(nproc)"
+    - cmake --install "build/$VARIANT" --prefix "$CI_PROJECT_DIR/install/$VARIANT"
+    - echo "== produced binaries ==" && file "install/$VARIANT/bin/"*
+    - ccache -s | tail -n3 || true
+  artifacts:
+    name: "serial-link-$VARIANT-build"
+    paths: ["build/$VARIANT/", "install/$VARIANT/"]
+    expire_in: 1 day
+
+.test:
+  stage: test
+  before_script:
+    - |
+      case "$ARCH" in
+        aarch64) DEPS="cross-arm64 qemu" ;;
+        riscv64) DEPS="cross-riscv64 qemu" ;;
+        *)       DEPS="host-gtest" ;;
+      esac
+    - bash ci/setup.sh base $DEPS
+  script:
+    # ctest runs cross binaries through the toolchain's CMAKE_CROSSCOMPILING_EMULATOR.
+    - ctest --test-dir "build/$VARIANT" --output-on-failure --no-tests=error
+            --output-junit "$CI_PROJECT_DIR/build/$VARIANT/junit.xml"
+  artifacts:
+    when: always
+    reports:
+      junit: "build/$VARIANT/junit.xml"
+    expire_in: 1 week
+
+.integration:
+  stage: integration
+  before_script:
+    - |
+      case "$ARCH" in
+        aarch64) DEPS="cross-arm64 qemu" ;;
+        riscv64) DEPS="cross-riscv64 qemu" ;;
+        *)       DEPS="" ;;
+      esac
+    - bash ci/setup.sh base python $DEPS
+  script:
+    # C++ apps (native, or foreign-arch under $EMU) <-> Python reference sims.
+    - EMU="$EMU" bash ci/integration_smoke.sh "$CI_PROJECT_DIR/install/$VARIANT/bin"
+
+.package:
+  stage: package
+  before_script:
+    - bash ci/setup.sh base
+  script:
+    - ( cd "build/$VARIANT" && cpack )
+    - mkdir -p "dist/$VARIANT"
+    - mv "build/$VARIANT/"serial-link-*.tar.gz "dist/$VARIANT/" 2>/dev/null || true
+    - mv "build/$VARIANT/"serial-link_*.deb     "dist/$VARIANT/" 2>/dev/null || true
+    - echo "== packages ==" && ls -la "dist/$VARIANT/"
+  artifacts:
+    name: "serial-link-$VARIANT-pkg"
+    paths: ["dist/$VARIANT/"]
+    expire_in: 1 month
+
+.sbom:
+  stage: sbom
+  before_script:
+    - bash ci/setup.sh base sbom
+  script:
+    - mkdir -p "sbom/$VARIANT"
+    - syft scan "dir:install/$VARIANT"
+        --source-name "serial-link" --source-version "$VARIANT"
+        -o "cyclonedx-json=sbom/$VARIANT/cyclonedx.json"
+        -o "spdx-json=sbom/$VARIANT/spdx.json"
+        -o table
+    # Advisory vulnerability scan of the produced SBOM (never blocks the pipeline).
+    - grype "sbom:sbom/$VARIANT/cyclonedx.json" || true
+  artifacts:
+    name: "serial-link-$VARIANT-sbom"
+    paths: ["sbom/$VARIANT/"]
+    reports:
+      cyclonedx: ["sbom/$VARIANT/cyclonedx.json"]
+    expire_in: 1 month
+
+# ============================================================================
+#  concrete per-variant jobs  (stage template  ×  variant template)
+# ============================================================================
+
+# ---- x86_64-broadwell ----
+build:x86_64-broadwell:       {extends: [.build,       .v-x86_64-broadwell]}
+test:x86_64-broadwell:        {extends: [.test,        .v-x86_64-broadwell], needs: ["build:x86_64-broadwell"]}
+integration:x86_64-broadwell: {extends: [.integration, .v-x86_64-broadwell], needs: ["build:x86_64-broadwell"]}
+package:x86_64-broadwell:     {extends: [.package,     .v-x86_64-broadwell], needs: ["build:x86_64-broadwell"]}
+sbom:x86_64-broadwell:        {extends: [.sbom,        .v-x86_64-broadwell], needs: ["build:x86_64-broadwell"]}
+
+# ---- x86_64-znver2 (Ryzen) ----
+build:x86_64-znver2:          {extends: [.build,       .v-x86_64-znver2]}
+test:x86_64-znver2:           {extends: [.test,        .v-x86_64-znver2], needs: ["build:x86_64-znver2"]}
+integration:x86_64-znver2:    {extends: [.integration, .v-x86_64-znver2], needs: ["build:x86_64-znver2"]}
+package:x86_64-znver2:        {extends: [.package,     .v-x86_64-znver2], needs: ["build:x86_64-znver2"]}
+sbom:x86_64-znver2:           {extends: [.sbom,        .v-x86_64-znver2], needs: ["build:x86_64-znver2"]}
+
+# ---- aarch64-cortex-a72 ----
+build:aarch64-cortex-a72:       {extends: [.build,       .v-aarch64-cortex-a72]}
+test:aarch64-cortex-a72:        {extends: [.test,        .v-aarch64-cortex-a72], needs: ["build:aarch64-cortex-a72"]}
+integration:aarch64-cortex-a72: {extends: [.integration, .v-aarch64-cortex-a72], needs: ["build:aarch64-cortex-a72"]}
+package:aarch64-cortex-a72:     {extends: [.package,     .v-aarch64-cortex-a72], needs: ["build:aarch64-cortex-a72"]}
+sbom:aarch64-cortex-a72:        {extends: [.sbom,        .v-aarch64-cortex-a72], needs: ["build:aarch64-cortex-a72"]}
+
+# ---- riscv64-sifive-x280 ----
+build:riscv64-sifive-x280:       {extends: [.build,       .v-riscv64-sifive-x280]}
+test:riscv64-sifive-x280:        {extends: [.test,        .v-riscv64-sifive-x280], needs: ["build:riscv64-sifive-x280"]}
+integration:riscv64-sifive-x280: {extends: [.integration, .v-riscv64-sifive-x280], needs: ["build:riscv64-sifive-x280"]}
+package:riscv64-sifive-x280:     {extends: [.package,     .v-riscv64-sifive-x280], needs: ["build:riscv64-sifive-x280"]}
+sbom:riscv64-sifive-x280:        {extends: [.sbom,        .v-riscv64-sifive-x280], needs: ["build:riscv64-sifive-x280"]}
+
+# ---- riscv64-spacemit-k1 (Orange Pi RV2) ----
+build:riscv64-spacemit-k1:       {extends: [.build,       .v-riscv64-spacemit-k1]}
+test:riscv64-spacemit-k1:        {extends: [.test,        .v-riscv64-spacemit-k1], needs: ["build:riscv64-spacemit-k1"]}
+integration:riscv64-spacemit-k1: {extends: [.integration, .v-riscv64-spacemit-k1], needs: ["build:riscv64-spacemit-k1"]}
+package:riscv64-spacemit-k1:     {extends: [.package,     .v-riscv64-spacemit-k1], needs: ["build:riscv64-spacemit-k1"]}
+sbom:riscv64-spacemit-k1:        {extends: [.sbom,        .v-riscv64-spacemit-k1], needs: ["build:riscv64-spacemit-k1"]}
+
+# ============================================================================
+#  lint stage — architecture-independent, runs once
+# ============================================================================
+
+lint:format:
+  stage: lint
+  needs: []
+  allow_failure: true          # advisory until the tree is auto-formatted in CI
+  before_script: [bash ci/setup.sh lint]
+  script:
+    - |
+      files=$(find src include apps tests \( -name '*.cpp' -o -name '*.hpp' \) -print)
+      echo "$files"
+      clang-format --dry-run --Werror $files
+
+lint:tidy:
+  stage: lint
+  needs: []
+  allow_failure: true          # clang-tidy findings are advisory
+  before_script: [bash ci/setup.sh base lint host-gtest]
+  script:
+    - cmake -S . -B build/lint -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DSERIAL_LINK_BUILD_TESTS=ON
+    - clang-tidy -p build/lint --quiet src/*.cpp apps/*/*.cpp
+
+lint:static:
+  stage: lint
+  needs: []
+  before_script: [bash ci/setup.sh base lint]     # gating
+  script:
+    - cppcheck --enable=warning,portability --std=c++20 --language=c++
+               -I include --error-exitcode=1 --quiet
+               --suppress=normalCheckLevelMaxBranches src apps
+    - shellcheck ci/*.sh
+
+# ============================================================================
+#  repo-wide source SBOM (Python deps + C++ sources)
+# ============================================================================
+sbom:source:
+  stage: sbom
+  needs: []
+  before_script: [bash ci/setup.sh base sbom]
+  script:
+    - mkdir -p sbom/source
+    - syft scan "dir:." --source-name "serial-link" --source-version "source"
+        -o "cyclonedx-json=sbom/source/cyclonedx.json" -o table
+  artifacts:
+    name: "serial-link-source-sbom"
+    paths: ["sbom/source/"]
+    reports:
+      cyclonedx: ["sbom/source/cyclonedx.json"]
+    expire_in: 1 month
+
+# ============================================================================
+#  optional: build + push the prebuilt CI toolchain image (docker/Containerfile.ci)
+# ============================================================================
+# Runs on the default branch when the Containerfile changes, on schedules, or
+# manually. Gated on REGISTRY_ENABLED so gitlab-ci-local skips it. Point the
+# pipeline at the result by setting CI_IMAGE = $CI_REGISTRY_IMAGE/toolchain:latest.
+ci-image:
+  stage: .pre
+  image:
+    name: gcr.io/kaniko-project/executor:v1.23.2-debug
+    entrypoint: [""]
+  interruptible: false
+  cache: []
+  rules:
+    - if: '$REGISTRY_ENABLED != "true"'
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes: [docker/Containerfile.ci, ci/setup.sh]
+    - when: manual
+      allow_failure: true
+  before_script: []
+  script:
+    - mkdir -p /kaniko/.docker
+    - |
+      echo "{\"auths\":{\"$CI_REGISTRY\":{\"username\":\"$CI_REGISTRY_USER\",\"password\":\"$CI_REGISTRY_PASSWORD\"}}}" \
+        > /kaniko/.docker/config.json
+    - /kaniko/executor
+        --context "$CI_PROJECT_DIR"
+        --dockerfile "$CI_PROJECT_DIR/docker/Containerfile.ci"
+        --destination "$CI_REGISTRY_IMAGE/toolchain:latest"
+        --destination "$CI_REGISTRY_IMAGE/toolchain:$CI_COMMIT_SHORT_SHA"

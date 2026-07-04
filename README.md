@@ -18,7 +18,9 @@ The wire interfaces are specified byte-for-byte in two Interface Design Document
 
 ```
 CMakeLists.txt · src/ · include/ · apps/ · tests/   ← the C++20 port (ships on the board / Yocto)
-Containerfile.build · Containerfile.runtime          ← C++ build + runtime images
+docker/                                              ← C++ build + runtime + CI toolchain images
+cmake/toolchains/                                    ← per-microarch cross toolchains (x86/ARM/RISC-V)
+.gitlab-ci.yml · ci/                                 ← multi-arch CI/CD (docs/ci-cd.md)
 tools/                                               ← Python test drivers & framework (tools/README.md)
 environments/                                        ← containerised integration envs (streaming, c2)
 docs/                                                ← testing guides + design notes
@@ -120,6 +122,16 @@ podman run --rm rs422-cpp-build ctest --test-dir /build --output-on-failure
 
 For a serial device, pass it through with `--device /dev/ttyUSB0`; the runtime image's user is
 in the `dialout` group.
+
+## CI/CD (multi-arch)
+
+The GitLab pipeline ([`.gitlab-ci.yml`](.gitlab-ci.yml)) runs **lint → build → test →
+integration → package → sbom** across five microarchitecture variants —
+`x86_64-broadwell`, `x86_64-znver2` (Ryzen), `aarch64-cortex-a72`,
+`riscv64-sifive-x280`, and `riscv64-spacemit-k1` (Orange Pi RV2). Cross builds use
+`cmake/toolchains/<variant>.cmake` and run their test suites under qemu-user. It also
+runs locally with [`gitlab-ci-local`](https://github.com/firecow/gitlab-ci-local).
+See **[docs/ci-cd.md](docs/ci-cd.md)**.
 
 ## Yocto integration
 

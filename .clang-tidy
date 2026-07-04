@@ -1,0 +1,17 @@
+# clang-tidy for the C++ port. Advisory in CI (the lint:tidy job is allow_failure)
+# — a curated, low-noise set focused on real bugs, portability across the x86 /
+# ARM / RISC-V targets, and performance, without the churny modernize/naming nits.
+Checks: >
+  bugprone-*,
+  performance-*,
+  portability-*,
+  cppcoreguidelines-narrowing-conversions,
+  misc-misplaced-const,
+  misc-redundant-expression,
+  readability-misleading-indentation,
+  readability-non-const-parameter,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-narrowing-conversions
+WarningsAsErrors: ''
+HeaderFilterRegex: 'include/serial_link/.*'
+FormatStyle: file

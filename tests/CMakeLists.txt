@@ -28,4 +28,12 @@ target_link_libraries(serial_link_tests PRIVATE serial_link GTest::gtest_main)
 target_compile_options(serial_link_tests PRIVATE -Wall -Wextra)
 
 include(GoogleTest)
-gtest_discover_tests(serial_link_tests)
+# DISCOVERY_MODE PRE_TEST defers running the test binary from build time to `ctest`
+# time. That is what lets a cross-compiled binary be enumerated + run through
+# CMAKE_CROSSCOMPILING_EMULATOR (qemu-user, set by the target toolchain files)
+# instead of being executed on the x86 build host. Native builds are unaffected.
+gtest_discover_tests(serial_link_tests
+  DISCOVERY_MODE PRE_TEST
+  DISCOVERY_TIMEOUT 30
+  PROPERTIES TIMEOUT 120
+)

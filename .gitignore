@@ -6,3 +6,9 @@ __pycache__/
 build/
 dist/
 environments/*/logs/
+
+# CI / local-pipeline outputs (gitlab-ci-local, cross builds, SBOMs)
+install/
+sbom/
+.ccache/
+.gitlab-ci-local/

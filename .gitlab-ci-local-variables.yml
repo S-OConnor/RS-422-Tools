@@ -1,0 +1,16 @@
+---
+# Variables auto-loaded by gitlab-ci-local (https://github.com/firecow/gitlab-ci-local).
+# They shape the pipeline for a local Docker run — the real GitLab pipeline is
+# unaffected (it never reads this file).
+
+# Don't try to build/push the toolchain image locally (no registry / no auth).
+# This alone disables the `ci-image` job, so CI_REGISTRY_IMAGE is never expanded
+# locally (leaving it unset here avoids gitlab-ci-local's predefined-var warning).
+REGISTRY_ENABLED: "false"
+
+# Full clone locally (GIT_DEPTH shallow-fetch is a remote-runner optimisation).
+GIT_DEPTH: "0"
+
+# Uncomment to use the prebuilt toolchain image locally instead of installing
+# deps per job (after: gitlab-ci-local ci-image  OR  podman build -f docker/Containerfile.ci):
+# CI_IMAGE: "localhost/serial-link/toolchain:latest"
